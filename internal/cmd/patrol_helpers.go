@@ -51,11 +51,14 @@ func findActivePatrol(cfg PatrolConfig) (patrolID, patrolLine string, found bool
 		b = beads.New(cfg.BeadsDir)
 	}
 
-	// Find hooked patrol beads for this agent
+	// Find hooked patrol beads for this agent. Patrol wisps live in the
+	// ephemeral (wisps) table, so Ephemeral=true is required — without it
+	// the call returns no rows and patrols appear absent (hq-l21i).
 	hookedBeads, listErr := b.List(beads.ListOptions{
-		Status:   beads.StatusHooked,
-		Assignee: cfg.Assignee,
-		Priority: -1,
+		Status:    beads.StatusHooked,
+		Assignee:  cfg.Assignee,
+		Priority:  -1,
+		Ephemeral: true,
 	})
 	if listErr != nil {
 		return "", "", false, fmt.Errorf("listing hooked beads: %w", listErr)
@@ -164,11 +167,13 @@ func burnPreviousPatrolWisps(cfg PatrolConfig) {
 		b = beads.New(cfg.BeadsDir)
 	}
 
-	// Find all hooked patrol beads for this agent
+	// Find all hooked patrol beads for this agent. Ephemeral=true required
+	// to search the wisps table where patrol roots live (hq-l21i).
 	hookedBeads, err := b.List(beads.ListOptions{
-		Status:   beads.StatusHooked,
-		Assignee: cfg.Assignee,
-		Priority: -1,
+		Status:    beads.StatusHooked,
+		Assignee:  cfg.Assignee,
+		Priority:  -1,
+		Ephemeral: true,
 	})
 	if err != nil {
 		style.PrintWarning("burn: could not list hooked beads: %v", err)

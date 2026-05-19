@@ -343,8 +343,8 @@ func TestBuildRefineryPatrolVars_BoolFormat(t *testing.T) {
 	trueVal := true
 	falseVal2 := false
 	mq := &config.MergeQueueConfig{
-		Enabled:                         true,
-		IntegrationBranchAutoLand:       &trueVal,
+		Enabled:                          true,
+		IntegrationBranchAutoLand:        &trueVal,
 		IntegrationBranchRefineryEnabled: &trueVal,
 		RunTests:                         &trueVal,
 		SetupCommand:                     "npm ci",
@@ -629,13 +629,21 @@ func setupPatrolTestDB(t *testing.T) (string, *beads.Beads) {
 	return tmpDir, b
 }
 
-// createHookedPatrol creates a bead with a patrol title and hooks it.
-// If withOpenChild is true, creates an open child bead to simulate an active patrol.
+// createHookedPatrol creates an ephemeral (wisp) bead with a patrol title and hooks it.
+// If withOpenChild is true, creates a non-ephemeral child bead to drive the
+// stale/active discriminator in checkHasOpenChildren.
+//
+// Production patrols are root-only (steps rendered inline at prime time), so the
+// root MUST be ephemeral to match findActivePatrol/burnPreviousPatrolWisps, which
+// list with Ephemeral=true (hq-l21i). Children exist in tests only to exercise
+// the stale-cleanup path; they remain non-ephemeral so checkHasOpenChildren's
+// non-ephemeral List call sees them.
 func createHookedPatrol(t *testing.T, b *beads.Beads, molName, assignee string, withOpenChild bool) string {
 	t.Helper()
 	root, err := b.Create(beads.CreateOptions{
-		Title:    molName + " (wisp)",
-		Priority: -1,
+		Title:     molName + " (wisp)",
+		Priority:  -1,
+		Ephemeral: true,
 	})
 	if err != nil {
 		t.Fatalf("create patrol root: %v", err)
@@ -927,6 +935,89 @@ func TestFindActivePatrol_StaleCleanupCapped(t *testing.T) {
 	// Total accounted for
 	if closedCount+hookedCount != numStale {
 		t.Errorf("closed=%d + hooked=%d != total=%d", closedCount, hookedCount, numStale)
+	}
+}
+
+// TestFindActivePatrol_EphemeralRequired is the regression test for hq-l21i.
+// Production patrol wisps are created ephemeral (they live in the wisps table,
+// not the issues table). A non-ephemeral List call returns zero rows even when
+// hooked patrols exist, making patrols appear absent. This test creates a
+// hooked ephemeral patrol and asserts findActivePatrol returns it — which only
+// works when findActivePatrol passes Ephemeral=true to b.List.
+func TestFindActivePatrol_EphemeralRequired(t *testing.T) {
+	requireBd(t)
+	tmpDir, b := setupPatrolTestDB(t)
+
+	molName := "mol-test-patrol"
+	assignee := "testrig/witness"
+
+	// Create an ephemeral patrol root with an open (non-ephemeral) child to
+	// make it active. Matches production: patrol root in wisps table, hooked.
+	rootID := createHookedPatrol(t, b, molName, assignee, true /* withOpenChild */)
+
+	// Sanity check: a non-ephemeral list (the pre-fix behavior) must NOT see
+	// the patrol. If this changes, the regression assertion below is meaningless.
+	nonEphemeral, err := b.List(beads.ListOptions{
+		Status:   beads.StatusHooked,
+		Assignee: assignee,
+		Priority: -1,
+	})
+	if err != nil {
+		t.Fatalf("non-ephemeral list: %v", err)
+	}
+	for _, bead := range nonEphemeral {
+		if bead.ID == rootID {
+			t.Fatalf("non-ephemeral list found ephemeral patrol %s — test setup invalid", rootID)
+		}
+	}
+
+	cfg := PatrolConfig{
+		PatrolMolName: molName,
+		BeadsDir:      tmpDir,
+		Assignee:      assignee,
+		Beads:         b,
+	}
+
+	patrolID, _, found, findErr := findActivePatrol(cfg)
+	if findErr != nil {
+		t.Fatalf("findActivePatrol error: %v", findErr)
+	}
+	if !found {
+		t.Fatal("ephemeral patrol not found — findActivePatrol must list with Ephemeral=true (hq-l21i)")
+	}
+	if patrolID != rootID {
+		t.Errorf("patrolID = %q, want %q", patrolID, rootID)
+	}
+}
+
+// TestBurnPreviousPatrolWisps_EphemeralRequired is the burnPreviousPatrolWisps
+// half of hq-l21i. Without Ephemeral=true on the List call, the burn would silently
+// no-op against ephemeral patrol roots, leaving them to accumulate forever.
+func TestBurnPreviousPatrolWisps_EphemeralRequired(t *testing.T) {
+	requireBd(t)
+	tmpDir, b := setupPatrolTestDB(t)
+
+	molName := "mol-test-patrol"
+	assignee := "testrig/witness"
+
+	// Ephemeral patrol root — matches production.
+	patrolID := createHookedPatrol(t, b, molName, assignee, false)
+
+	cfg := PatrolConfig{
+		PatrolMolName: molName,
+		BeadsDir:      tmpDir,
+		Assignee:      assignee,
+		Beads:         b,
+	}
+
+	burnPreviousPatrolWisps(cfg)
+
+	issue, err := b.Show(patrolID)
+	if err != nil {
+		t.Fatalf("show patrol: %v", err)
+	}
+	if issue.Status != "closed" {
+		t.Errorf("patrol status = %q, want %q — burnPreviousPatrolWisps must list with Ephemeral=true (hq-l21i)", issue.Status, "closed")
 	}
 }
 
