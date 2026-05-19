@@ -484,21 +484,15 @@ id = "fire-notifications"
 title = "Fire notifications"
 needs = ["resolve-external-deps"]
 description = """
-Fire notifications for convoy and cross-rig events.
+Fire notifications for cross-rig dependency resolution events.
 
-After convoy completion or cross-rig dependency resolution, notify relevant parties.
-
-**Convoy completion notifications:**
-When a convoy closes (all tracked issues done), notify the Overseer:
-```bash
-# Convoy gt-convoy-xxx just completed
-gt mail send mayor/ -s "Convoy complete: <convoy-title>" \\
-  -m "Convoy <id> has completed. All tracked issues closed.
-      Duration: <start to end>
-      Issues: <count>
-
-      Summary: <brief description of what was accomplished>"
-```
+**DO NOT send convoy-completion mail from this step.** `gt convoy check`
+(invoked by the prior step `check-convoy-completion`) is the only
+authoritative emitter of "Convoy complete: …" mail to mayor/. It fires
+exactly once, on the open→closed transition. Re-emitting from this step
+floods mayor/ with duplicates every patrol cycle for convoys that
+closed in earlier cycles (hq-0j1x). Leave convoy notifications to
+`gt convoy check`.
 
 **Cross-rig resolution notifications:**
 When a cross-rig dependency resolves, notify the affected rig:
@@ -511,7 +505,6 @@ gt mail send gastown/witness -s "Dependency resolved: <bd-xxx>" \\
 ```
 
 **Notification targets:**
-- Convoy complete → mayor/ (for strategic visibility)
 - Cross-rig dep resolved → <rig>/witness (for operational awareness)
 
 Keep notifications brief and actionable. The recipient can run bd show for details."""
