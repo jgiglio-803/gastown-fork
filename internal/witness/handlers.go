@@ -1589,6 +1589,16 @@ func detectZombieDeadSession(bd *BdCli, workDir, townRoot, rigName, polecatName,
 		if hookFound && (hookStatus == "closed" || hookStatus == "") {
 			return ZombieResult{}, false
 		}
+	} else {
+		// gs-8dq: Empty hook + active state is a stale-state, not a zombie.
+		// A polecat with no hooked work has nothing to resume; restarting it
+		// spawns a session that immediately runs gt prime → finds no work →
+		// runs gt done → cycle. Past the spawning grace period (handled
+		// above), an active state with no hook means the polecat completed
+		// but its agent state wasn't cleared. Leave it alone — sandbox is
+		// preserved for the next sling, which is the authoritative way to
+		// give this polecat work.
+		return ZombieResult{}, false
 	}
 
 	// TOCTOU guard: verify session wasn't recreated since detection.
